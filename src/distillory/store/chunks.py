@@ -35,6 +35,11 @@ class ChunkStore:
     def __init__(self, conn: sqlite3.Connection, embedder):
         self.conn = conn
         self.embedder = embedder
+        self.autocommit = True   # see ProfileStore.autocommit — engine.add batches a single commit
+
+    def _commit(self) -> None:
+        if self.autocommit:
+            self.conn.commit()
 
     def add_chunk(self, slug: str | None, source_ref: str, text: str, *,
                   ord_: int = 0, event_date: str | None = None,
@@ -60,7 +65,7 @@ class ChunkStore:
                 "SELECT id FROM chunks WHERE chunk_uid = ?", (uid,)
             ).fetchone()[0]
             self._store_vec(chunk_id, text)
-        self.conn.commit()
+        self._commit()
         return {"added": added, "chunk_id": chunk_id}
 
     def _store_vec(self, chunk_id: int, text: str) -> None:
@@ -75,7 +80,13 @@ class ChunkStore:
         )
 
     def search_fts(self, query: str, *, limit: int = 8, slug: str | None = None) -> list[ChunkHit]:
-        """BM25-ranked chunk search (heritage: mbrain search.search)."""
+        """BM25-ranked chunk search (heritage: mbrain search.search). Crash-safe:
+        strips NUL bytes (which break FTS5 even inside a quoted phrase) and never
+        lets an FTS5 syntax error escape the public search() verb."""
+        query = (query or "").replace("\x00", " ").strip()
+        limit = max(1, int(limit))
+        if not query:
+            return []
         sql = (
             "SELECT c.chunk_uid, c.slug, c.source_ref, c.text, "
             "bm25(chunk_fts) AS score "
@@ -87,13 +98,17 @@ class ChunkStore:
             sql += " AND c.slug = ?"
             params.append(slug)
         sql += " ORDER BY score LIMIT ?"
-        params.append(int(limit))
+        params.append(limit)
         try:
             rows = self.conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError:
-            # FTS5 syntax error (bare punctuation etc.) -> retry as a quoted literal
-            safe = '"' + (query or "").replace('"', " ") + '"'
-            rows = self.conn.execute(sql, [safe, *params[1:]]).fetchall()
+            # FTS5 syntax error (bare punctuation, NEAR, unbalanced quotes...) ->
+            # retry as a single quoted phrase; if even THAT fails, return nothing.
+            safe = '"' + query.replace('"', " ") + '"'
+            try:
+                rows = self.conn.execute(sql, [safe, *params[1:]]).fetchall()
+            except sqlite3.OperationalError:
+                return []
         return [
             ChunkHit(chunk_uid=r["chunk_uid"], slug=r["slug"], source_ref=r["source_ref"],
                      text=r["text"], score=float(r["score"]))

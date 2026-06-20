@@ -30,12 +30,6 @@ class MemoryConfig:
             "schema": os.environ.get("DISTILLORY_SCHEMA"),
             "model": os.environ.get("DISTILLORY_MODEL"),
         }
-        # deprecated aliases (one-release grace): llm= / embedder=
-        if "llm" in kwargs and "synth" not in kwargs:
-            kwargs["synth"] = kwargs.pop("llm")
-        if "embedder" in kwargs and "embed" not in kwargs:
-            kwargs["embed"] = kwargs.pop("embedder")
-
         base = cls(db_path=db_path)
         for k in ("synth", "embed", "schema", "model"):
             if kwargs.get(k) is not None:

@@ -30,6 +30,13 @@ def _profile_row(r: sqlite3.Row) -> dict[str, Any]:
 class ProfileStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+        # When False, writes are left uncommitted so the caller (engine.add) can
+        # commit several store operations as ONE atomic transaction.
+        self.autocommit = True
+
+    def _commit(self) -> None:
+        if self.autocommit:
+            self.conn.commit()
 
     # ── reads ───────────────────────────────────────────────────────────────
     def list(self, entity_type: str | None = None, dirty_only: bool = False) -> dict[str, Any]:
@@ -86,7 +93,7 @@ class ProfileStore:
                 "UPDATE profiles SET name = ? WHERE slug = ? AND (name = '' OR name IS NULL)",
                 (name, slug),
             )
-        self.conn.commit()
+        self._commit()
 
     def upsert(self, slug: str, entity_type: str = "prospect", **fields: Any) -> dict[str, Any]:
         slug = (slug or "").strip()
@@ -107,7 +114,7 @@ class ProfileStore:
         params.append(now)
         params.append(slug)
         self.conn.execute(f"UPDATE profiles SET {', '.join(sets)} WHERE slug = ?", params)
-        self.conn.commit()
+        self._commit()
         row = self.conn.execute("SELECT * FROM profiles WHERE slug = ?", (slug,)).fetchone()
         return {"profile": _profile_row(row)}
 
@@ -131,7 +138,7 @@ class ProfileStore:
         added = cur.rowcount > 0
         if added:
             self.conn.execute("UPDATE profiles SET dirty = 1, updated_at = ? WHERE slug = ?", (now, slug))
-        self.conn.commit()
+        self._commit()
         return {"ok": True, "added": added, "slug": slug}
 
     def mark_dirty(self, slug: str, dirty: bool = True) -> dict[str, Any]:
@@ -139,7 +146,7 @@ class ProfileStore:
             "UPDATE profiles SET dirty = ?, updated_at = ? WHERE slug = ?",
             (1 if dirty else 0, utc_now(), (slug or "").strip()),
         )
-        self.conn.commit()
+        self._commit()
         return {"ok": True}
 
     def set_content(self, slug: str, content_md: str, fields: dict[str, Any] | None = None,
@@ -163,6 +170,6 @@ class ProfileStore:
             (slug, now, now),
         )
         self.conn.execute(f"UPDATE profiles SET {', '.join(sets)} WHERE slug = ?", params)
-        self.conn.commit()
+        self._commit()
         row = self.conn.execute("SELECT * FROM profiles WHERE slug = ?", (slug,)).fetchone()
         return {"profile": _profile_row(row)}

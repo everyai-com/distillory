@@ -59,47 +59,72 @@ class Memory:
         if not source_ref:
             source_ref = "note:" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
-        self.profiles.ensure(slug, name=name, entity_type=entity_type)
-        src = self.profiles.add_source(
-            slug, source_ref, source_kind=(meta or {}).get("kind", "note"),
-            event_date=event_date, summary=text[:2000],
-        )
-        source_added = bool(src.get("added"))
-        self.chunks.add_chunk(slug, source_ref, text, event_date=event_date)
-        self.profiles.mark_dirty(slug, True)
+        # One atomic unit: ensure + add_source + add_chunk commit together, so a
+        # crash mid-add can't leave a citation pointing at a chunk never written.
+        self.profiles.autocommit = self.chunks.autocommit = False
+        try:
+            self.profiles.ensure(slug, name=name, entity_type=entity_type)
+            src = self.profiles.add_source(
+                slug, source_ref, source_kind=(meta or {}).get("kind", "note"),
+                event_date=event_date, summary=text[:2000],
+            )
+            source_added = bool(src.get("added"))
+            self.chunks.add_chunk(slug, source_ref, text, event_date=event_date)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        finally:
+            self.profiles.autocommit = self.chunks.autocommit = True
 
-        dirty = True
+        # add_source already set dirty=1 IFF the source was new; a no-op add does
+        # NOT re-dirty (keeps the "idle nights ~ 0 tokens" guarantee honest).
+        dirty = source_added
         if self.auto_synth and source_added:
             self.synthesize(entity=slug)
             dirty = False
         return AddResult(slug=slug, dirty=dirty, source_added=source_added)
 
-    def ingest(self, path: str, *, entity: str | None = None) -> dict:
+    def ingest(self, path: str, *, entity: str | None = None,
+               max_bytes: int = 2_000_000) -> dict:
         """Read a file (or every text file in a folder) and add it. Folder name
-        (or file stem) is the entity unless `entity` is given."""
+        (or file stem) is the entity unless `entity` is given. Skips files over
+        `max_bytes` and anything that looks binary, so a stray PNG or a huge log
+        can't poison the index or OOM the process. (Token-bounded chunking lands
+        in slice 4 — for now each file is one chunk.)"""
         p = Path(path).expanduser()
-        added, files = 0, 0
+        added, files, skipped = 0, 0, 0
         targets = sorted(p.rglob("*")) if p.is_dir() else [p]
         for f in targets:
             if not f.is_file():
                 continue
             try:
-                content = f.read_text(encoding="utf-8", errors="replace").strip()
+                if f.stat().st_size > max_bytes:
+                    skipped += 1
+                    continue
+                raw = f.read_bytes()
+                if b"\x00" in raw[:8192]:        # NUL in the head -> binary, skip
+                    skipped += 1
+                    continue
+                content = raw.decode("utf-8", errors="replace").strip()
             except Exception:
+                skipped += 1
                 continue
-            if not content:
+            # Too many replacement chars -> not really text.
+            if not content or content.count("�") > max(20, len(content) // 20):
+                skipped += 1
                 continue
             ent = entity or (p.name if p.is_dir() else f.stem)
-            res = self.add(content, entity=ent, source_ref=f"file:{f}",
-                           meta={"kind": "file"})
+            res = self.add(content, entity=ent, source_ref=f"file:{f}", meta={"kind": "file"})
             files += 1
             added += 1 if res.source_added else 0
-        return {"files": files, "added": added}
+        return {"files": files, "added": added, "skipped": skipped}
 
     # ── read path ───────────────────────────────────────────────────────────
     def search(self, query: str, *, k: int = 8, scope: Scope = "personal",
                kind: str | None = None, body: bool = False) -> list[Hit]:
-        return retrieve(self.conn, self.chunks, self.profiles, query, k=k, kind=kind, body=body)
+        return retrieve(self.conn, self.chunks, self.profiles, query,
+                        k=max(1, int(k)), kind=kind, body=body)
 
     def profile(self, name_or_slug: str) -> Hit | None:
         """Read ONE entity's full living profile, by human name or slug."""
@@ -136,7 +161,11 @@ class Memory:
         if all_dirty:
             slugs = [p["slug"] for p in self.profiles.list(dirty_only=True)["profiles"]]
         elif entity:
-            slugs = [self._resolve_slug(entity)]
+            slug = self._resolve_slug(entity)
+            if not self.profiles.exists(slug):
+                # Don't fabricate a phantom profile from a typo'd name.
+                raise KeyError(f"no such entity: {entity!r} — add a source for it first")
+            slugs = [slug]
         else:
             raise ValueError("pass entity=... or all_dirty=True")
 
@@ -200,6 +229,8 @@ class Memory:
             import warnings
             warnings.warn(
                 f"db was indexed with embed_model='{existing}' but this session uses "
-                f"'{model_id}'. Dense recall will degrade until you re-embed.",
+                f"'{model_id}'; the vectors are incompatible and dense recall will "
+                f"silently degrade. Until `mem reembed` lands (slice 5), use the "
+                f"original embedder or rebuild the db.",
                 stacklevel=2,
             )

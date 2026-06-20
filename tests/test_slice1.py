@@ -83,3 +83,52 @@ def test_search_returns_hit_objects(mem):
     mem.add("retrieval augmented generation notes", entity="RAG Notes")
     hits = mem.search("retrieval", body=True)
     assert all(isinstance(h, Hit) for h in hits)
+
+
+# ── regressions for the v0.1 adversarial review ──────────────────────────────
+
+def test_synthesize_unknown_entity_does_not_fabricate(mem):
+    """A typo in `mem synthesize` must error, not create a phantom profile."""
+    before = {h.slug for h in mem.entities()}
+    with pytest.raises(KeyError):
+        mem.synthesize(entity="Totally Unknown Person")
+    assert {h.slug for h in mem.entities()} == before
+
+
+def test_search_dedups_profile_and_its_own_chunk(mem):
+    mem.add("David at LucidWay wants the GTSI automation", entity="David Chen")
+    slugs = [h.slug for h in mem.search("GTSI") if h.slug]
+    assert slugs.count("david-chen") == 1   # profile once; its chunk not duplicated
+
+
+def test_noop_add_does_not_redirty(mem):
+    mem.add("first", entity="Steady Co", source_ref="s1")        # auto-synth clears dirty
+    r2 = mem.add("first", entity="Steady Co", source_ref="s1")   # idempotent no-op
+    assert r2.source_added is False
+    assert r2.dirty is False
+    dirty = mem.profiles.list(dirty_only=True)["profiles"]
+    assert all(p["slug"] != "steady-co" for p in dirty)          # not re-dirtied -> no wasted synth
+
+
+def test_nul_byte_query_does_not_crash(mem):
+    mem.add("hello world", entity="Hello")
+    assert mem.search("\x00") == []                              # no unhandled OperationalError
+    assert isinstance(mem.search("hello\x00world"), list)        # NUL stripped, still searches
+
+
+def test_negative_k_is_clamped(mem):
+    mem.add("alpha beta gamma", entity="AB")
+    assert isinstance(mem.search("alpha", k=-1), list)           # no confusing LIMIT -1 behavior
+
+
+def test_explicit_claude_without_key_errors_cleanly(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(ValueError):
+        Memory.open(tmp_path / "b.db", synth="claude")
+
+
+def test_unicode_query_matches_profile(mem):
+    r = mem.add("Signed for the Zürich rollout this quarter", entity="Müller GmbH")
+    assert mem.profile("Müller GmbH") is not None               # name resolves
+    hits = mem.search("zürich")
+    assert any(h.slug == r.slug for h in hits)                  # non-ASCII query participates

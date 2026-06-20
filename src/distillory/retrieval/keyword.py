@@ -23,7 +23,9 @@ def retrieve_profiles(conn: sqlite3.Connection, query: str, limit: int = 3,
     """Keyword-rank synthesized profiles by relevance to a query. Local, no deps,
     no embeddings. Ranks by DISTINCT query terms matched first (then frequency,
     identity-weighted), dropping profiles under `min_terms` distinct matches."""
-    terms = list(dict.fromkeys(re.findall(r"[a-z0-9]{3,}", (query or "").lower())))[:24]
+    # Unicode-aware tokens (3+ word chars, excluding underscore) so non-Latin
+    # queries participate — the chunk FTS already tokenizes unicode via unicode61.
+    terms = list(dict.fromkeys(re.findall(r"[^\W_]{3,}", (query or "").lower())))[:24]
     if not terms:
         return []
     floor = max(1, int(min_terms))
@@ -75,6 +77,10 @@ def retrieve(conn, chunk_store, profile_store, query: str, *, k: int = 8,
 
     if kind in (None, "chunk"):
         for ch in chunk_store.search_fts(query, limit=k):
+            # Its synthesized profile already surfaced above — don't return the
+            # same source twice (the profile is the already-reasoned version).
+            if ch.slug and ch.slug in seen_slugs:
+                continue
             hits.append(Hit(
                 slug=ch.slug,
                 title=ch.source_ref or (ch.slug or "chunk"),

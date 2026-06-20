@@ -77,7 +77,11 @@ def main(argv=None) -> int:
     p.add_argument("--entity", "-e", default=None)
 
     args = ap.parse_args(argv)
-    mem = _open(args)
+    try:
+        mem = _open(args)
+    except (ValueError, RuntimeError) as e:
+        print(f"mem: {e}", file=sys.stderr)
+        return 1
 
     try:
         if args.cmd == "add":
@@ -118,6 +122,9 @@ def main(argv=None) -> int:
         else:
             ap.print_help()
             return 2
+    except (KeyError, ValueError, RuntimeError) as e:
+        print(f"mem: {e}", file=sys.stderr)
+        return 1
     finally:
         mem.close()
     return 0

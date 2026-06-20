@@ -26,7 +26,10 @@ class AnthropicProvider:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self.base_url = base_url.rstrip("/")
         if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY is not set")
+            raise ValueError(
+                "ANTHROPIC_API_KEY is not set — pass synth='none' for offline/extractive, "
+                "or synth='auto' to degrade gracefully when no key is present."
+            )
 
     def complete(self, prompt: str, *, system: str | None = None,
                  max_tokens: int = 4096, timeout: int = 240) -> str:
