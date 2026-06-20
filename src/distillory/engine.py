@@ -18,7 +18,7 @@ from .providers import resolve_embedder, resolve_llm
 from .render.graph import build_graph
 from .render.markdown import preview, slugify
 from .retrieval.keyword import retrieve
-from .store import ChunkStore, ProfileStore, connect, get_meta, init_db, set_meta
+from .store import ChunkStore, LedgerStore, ProfileStore, connect, get_meta, init_db, set_meta
 from .synthesis import ProfileSynthesizer
 
 
@@ -35,6 +35,7 @@ class Memory:
 
         self.profiles = ProfileStore(self.conn)
         self.chunks = ChunkStore(self.conn, self.embedder)
+        self.ledger_store = LedgerStore(self.conn)
         self.synth = ProfileSynthesizer(self.llm, schema=self.schema)
         self.auto_synth = bool(cfg.auto_synth)
         self._lock = threading.RLock()   # serialize writes (server shares one conn across threads)
@@ -163,7 +164,7 @@ class Memory:
 
     # ── synthesis (the dreamer) ───────────────────────────────────────────────
     def synthesize(self, *, entity: str | None = None, all_dirty: bool = False) -> list[str]:
-        from .synthesis import parse_front_matter
+        from .synthesis import parse_front_matter, parse_ledger
         with self._lock:
             if all_dirty:
                 slugs = [p["slug"] for p in self.profiles.list(dirty_only=True)["profiles"]]
@@ -191,8 +192,16 @@ class Memory:
                 fields = parse_front_matter(md)
                 fields.setdefault("entity_type", etype)
                 self.profiles.set_content(slug, md, fields, clear_dirty=True)
+                # Mirror the synthesized ## Ledger into structured, queryable rows.
+                self.ledger_store.set_for_slug(slug, parse_ledger(md))
                 done.append(slug)
             return done
+
+    def ledger(self, name_or_slug: str) -> list[dict]:
+        """The structured, edge-typed fact ledger for one entity (newest first in
+        the profile; insertion order here). Each row: edge, statement, source_ref,
+        doc_date, event_date, status — so superseded facts are queryable."""
+        return self.ledger_store.for_slug(self._resolve_slug(name_or_slug))
 
     def graph(self, name_or_slug: str, *, depth: int = 2) -> dict:
         """Traverse the [[wikilink]] graph between profiles, from one entity."""
@@ -218,6 +227,7 @@ class Memory:
             "db_path": str(self.config.db_path),
             "profiles": len(self.profiles.list()["profiles"]),
             "chunks": self.chunks.count(),
+            "ledger": self.ledger_store.count(),
             "synth": getattr(self.llm, "name", "none"),
             "embed_model": getattr(info, "model_id", "none") if info else "none",
             "embed_dim": getattr(info, "dim", 0) if info else 0,

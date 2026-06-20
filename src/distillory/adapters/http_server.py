@@ -19,6 +19,7 @@ _ROUTES = {
     "/v1/synthesize": tools.synthesize,
     "/v1/entities": tools.entities,
     "/v1/graph": tools.graph,
+    "/v1/ledger": tools.ledger,
 }
 
 

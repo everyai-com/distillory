@@ -66,6 +66,14 @@ def build_server(mem):
     def memory_graph(name_or_slug: str, depth: int = 2) -> dict:
         return tools.graph(mem, name_or_slug, depth=depth)
 
+    @server.tool(
+        description="Show an entity's structured fact ledger — each fact with its "
+        "edge type (assert/update/extend/derive), dates, and status (so you can see "
+        "what was superseded). Use to explain WHY a profile says what it says."
+    )
+    def memory_ledger(name_or_slug: str) -> dict:
+        return tools.ledger(mem, name_or_slug)
+
     @server.resource("memory://profile/{slug}")
     def profile_resource(slug: str) -> str:
         """A synthesized profile, mountable straight into a client's context."""

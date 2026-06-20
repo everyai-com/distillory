@@ -15,10 +15,16 @@ from __future__ import annotations
 import re
 
 from ..store.db import today
+from .grader import validate
 from .prompt import build_synthesis_prompt
 from .schema_md import DEFAULT_SCHEMA
 
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
+
+
+def _clean(md: str | None) -> str | None:
+    md = _FENCE_RE.sub("", (md or "").strip()).strip()
+    return md or None
 
 
 class ProfileSynthesizer:
@@ -31,27 +37,45 @@ class ProfileSynthesizer:
         return self.llm is None or getattr(self.llm, "name", "none") == "none"
 
     def run(self, entity_name: str, entity_type: str, existing_md: str, sources_text: str) -> str:
-        # BYO Synthesizer object: has .synthesize(schema, existing, sources).
+        md = self._synthesize(entity_name, entity_type, existing_md, sources_text)
+        if md is None:                                # no LLM, or the call failed
+            return self._extractive(entity_name, entity_type, sources_text)
+        if not validate(md):
+            return md
+        # Schema violation -> exactly one repair-retry, then fall back rather than
+        # store a corrupt profile.
+        fixed = self._repair(entity_name, entity_type, existing_md, sources_text, validate(md))
+        if fixed is not None and not validate(fixed):
+            return fixed
+        return self._extractive(entity_name, entity_type, sources_text)
+
+    def _synthesize(self, name: str, etype: str, existing: str, sources: str) -> str | None:
+        if self._is_null:
+            return None
         if hasattr(self.llm, "synthesize") and not hasattr(self.llm, "complete"):
             try:
-                md = self.llm.synthesize(schema=self.schema, existing=existing_md,
-                                         sources=sources_text)
-                md = _FENCE_RE.sub("", (md or "").strip()).strip()
-                return md or self._extractive(entity_name, entity_type, sources_text)
+                return _clean(self.llm.synthesize(schema=self.schema, existing=existing, sources=sources))
             except Exception:
-                return self._extractive(entity_name, entity_type, sources_text)
+                return None
+        return self._complete(build_synthesis_prompt(name, etype, existing, sources, self.schema))
 
-        if self._is_null:
-            return self._extractive(entity_name, entity_type, sources_text)
+    def _repair(self, name: str, etype: str, existing: str, sources: str,
+                problems: list[str]) -> str | None:
+        note = ("\n\n=== YOUR PREVIOUS OUTPUT HAD PROBLEMS — FIX THESE AND RE-OUTPUT "
+                "THE FULL PROFILE (front matter + body), no code fences ===\n"
+                + "\n".join("- " + p for p in problems))
+        if hasattr(self.llm, "synthesize") and not hasattr(self.llm, "complete"):
+            try:
+                return _clean(self.llm.synthesize(schema=self.schema, existing=existing, sources=sources + note))
+            except Exception:
+                return None
+        return self._complete(build_synthesis_prompt(name, etype, existing, sources, self.schema) + note)
 
-        prompt = build_synthesis_prompt(entity_name, entity_type, existing_md,
-                                        sources_text, self.schema)
+    def _complete(self, prompt: str) -> str | None:
         try:
-            md = self.llm.complete(prompt, max_tokens=4096, timeout=240)
+            return _clean(self.llm.complete(prompt, max_tokens=4096, timeout=240))
         except Exception:
-            return self._extractive(entity_name, entity_type, sources_text)
-        md = _FENCE_RE.sub("", (md or "").strip()).strip()
-        return md or self._extractive(entity_name, entity_type, sources_text)
+            return None
 
     def _extractive(self, entity_name: str, entity_type: str, sources_text: str) -> str:
         """No-LLM floor: a schema-shaped profile assembled from the raw sources.

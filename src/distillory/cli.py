@@ -65,6 +65,9 @@ def main(argv=None) -> int:
     p = sub.add_parser("entities", help="list stored entities")
     p.add_argument("--stage", default=None)
 
+    p = sub.add_parser("ledger", help="show an entity's structured, edge-typed fact ledger")
+    p.add_argument("name")
+
     p = sub.add_parser("synthesize", help="(re)synthesize a profile")
     p.add_argument("name", nargs="?", default=None)
     p.add_argument("--all-dirty", action="store_true")
@@ -116,6 +119,13 @@ def main(argv=None) -> int:
             for h in ents:
                 flag = " *dirty" if h.meta.get("dirty") else ""
                 print(f"- {h.title}  ({h.snippet}){flag}  [{h.slug}]")
+        elif args.cmd == "ledger":
+            rows = mem.ledger(args.name)
+            if not rows:
+                print("(no ledger entries)")
+            for r in rows:
+                ev = f"  {{event {r['event_date']}}}" if r.get("event_date") else ""
+                print(f"- ({r['edge']}) {r['statement']}  [{r['status']}]  <- {r['source_ref']}{ev}")
         elif args.cmd in ("synthesize", "dream"):
             all_dirty = getattr(args, "all_dirty", False) or args.cmd == "dream"
             name = getattr(args, "name", None)

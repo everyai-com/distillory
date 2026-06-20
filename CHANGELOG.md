@@ -7,9 +7,6 @@ All notable changes to distillory are documented here. Format follows
 ## [Unreleased]
 
 ### Planned (sliced, highest-leverage first)
-- **Slice 2** — structured fact-ledger grader: validate→repair→retry synthesis +
-  edge-typed ledger rows (`assert/update/extend/derive`) so contradiction
-  resolution is a mechanism with a CI gate, not a claim.
 - **Slice 4** — dense retrieval (fastembed bge-small ONNX) + RRF hybrid fusion.
 - **Slice 7** — nightly "dreaming": dirty-only re-synthesis, decay, gap-hunting.
 - **Slice 10** — LongMemEval / LOCOMO benchmark harness.
@@ -20,10 +17,16 @@ First public cut. One embeddable SQLite file; numpy is the only base dependency.
 
 ### Added
 - **Core engine** — four verbs (`add`, `search`, `profile`, `synthesize`) plus
-  `entities`, `ingest`, `graph`, `doctor` over a single SQLite file.
+  `entities`, `ledger`, `ingest`, `graph`, `doctor` over a single SQLite file.
 - **Schema-graded synthesis** — one living, two-tier profile per entity; bring an
   LLM (Anthropic via stdlib urllib, or any `.complete()`/`.synthesize()` object)
   or run the offline extractive floor with no key.
+- **Fact-ledger grader** — synthesis is *validated* against the schema, with one
+  repair-retry before falling back to extractive (never stores a corrupt profile).
+  The `## Ledger` section is parsed into structured, **edge-typed**
+  (`assert/update/extend/derive`), temporally-grounded rows with a status, so
+  contradiction resolution (a superseded fact) is queryable via `ledger()` /
+  `mem ledger` — covered by an offline CI gate.
 - **Probe-and-degrade providers** — `synth="auto"` and the embedder ladder fall
   through to an always-available floor; works fully offline (`synth="none"`,
   `embed="hash"`).

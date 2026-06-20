@@ -55,3 +55,7 @@ def synthesize(mem, entity: str | None = None, all_dirty: bool = False) -> dict:
 
 def graph(mem, name_or_slug: str, depth: int = 2) -> dict:
     return mem.graph(name_or_slug, depth=depth)
+
+
+def ledger(mem, name_or_slug: str) -> dict:
+    return {"ledger": mem.ledger(name_or_slug)}

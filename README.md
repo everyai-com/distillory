@@ -75,6 +75,7 @@ mem.add("David is based in New York",  entity="David Chen", event_date="2026-05-
 mem.add("David just moved to London",  entity="David Chen", event_date="2026-06-18")
 mem.synthesize(entity="David Chen")
 # profile now reads "London (moved 2026-06, was NY)" — not two contradictory facts
+mem.ledger("David Chen")   # the NY 'assert' is now [superseded] by a London 'update' — queryable
 ```
 
 More in [`examples/`](examples/).
@@ -88,7 +89,8 @@ More in [`examples/`](examples/).
 | `profile(name_or_slug)` | Read **one** entity's full living profile — the cheap, already-reasoned answer. |
 | `synthesize(entity=...)` | The dreamer: (re)synthesize a profile against the schema. The one expensive verb. |
 
-Plus `entities()`, `ingest(path)`, `graph()`, `doctor()`, and the `mem` CLI (1:1 with the API).
+Plus `entities()`, `ledger()` (the structured edge-typed facts behind a profile),
+`ingest(path)`, `graph()`, `doctor()`, and the `mem` CLI (1:1 with the API).
 
 ## Plug it into Claude / agents (MCP)
 
@@ -150,12 +152,12 @@ caveats doc; we keep it fair and up to date.
 
 ## Status
 
-**v0.1**: the keyword core, schema-graded synthesis (LLM or extractive), one SQLite
-file, the `mem` CLI, and an **MCP + HTTP server** so any Claude / agent gets
-persistent memory today. Roadmap, in order: the structured fact-ledger +
-contradiction grader (makes contradiction-resolution a *mechanism*, with a CI gate),
-dense (fastembed) + RRF hybrid retrieval, the nightly "dreaming" gap pass, and
-LongMemEval / LOCOMO benchmarks. We don't pitch "hybrid" or numbers we haven't run.
+**v0.1**: the keyword core, **schema-graded synthesis with a fact-ledger grader**
+(validate→repair→retry, then contradiction resolution persisted as structured,
+edge-typed rows — `mem ledger`), one SQLite file, the `mem` CLI, and an **MCP +
+HTTP server** so any Claude / agent gets persistent memory today. Roadmap, in
+order: dense (fastembed) + RRF hybrid retrieval, the nightly "dreaming" gap pass,
+and LongMemEval / LOCOMO benchmarks. We don't pitch "hybrid" or numbers we haven't run.
 
 Heir to [mbrain](https://github.com/everyai-com/mbrain) (keyword-only); the
 synthesis engine is extracted from a production desktop app.
