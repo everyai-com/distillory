@@ -9,11 +9,13 @@ an immutable source, chunk + embed + index, mark dirty. Judgment happens only in
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 from .config import MemoryConfig, load_schema
 from .models import AddResult, Hit, Scope
 from .providers import resolve_embedder, resolve_llm
+from .render.graph import build_graph
 from .render.markdown import slugify
 from .retrieval.keyword import retrieve
 from .store import ChunkStore, ProfileStore, connect, get_meta, init_db, set_meta
@@ -35,6 +37,7 @@ class Memory:
         self.chunks = ChunkStore(self.conn, self.embedder)
         self.synth = ProfileSynthesizer(self.llm, schema=self.schema)
         self.auto_synth = bool(cfg.auto_synth)
+        self._lock = threading.RLock()   # serialize writes (server shares one conn across threads)
 
         self._lock_embedder_identity()
 
@@ -59,31 +62,33 @@ class Memory:
         if not source_ref:
             source_ref = "note:" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
-        # One atomic unit: ensure + add_source + add_chunk commit together, so a
-        # crash mid-add can't leave a citation pointing at a chunk never written.
-        self.profiles.autocommit = self.chunks.autocommit = False
-        try:
-            self.profiles.ensure(slug, name=name, entity_type=entity_type)
-            src = self.profiles.add_source(
-                slug, source_ref, source_kind=(meta or {}).get("kind", "note"),
-                event_date=event_date, summary=text[:2000],
-            )
-            source_added = bool(src.get("added"))
-            self.chunks.add_chunk(slug, source_ref, text, event_date=event_date)
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
-        finally:
-            self.profiles.autocommit = self.chunks.autocommit = True
+        with self._lock:
+            # One atomic unit: ensure + add_source + add_chunk commit together, so
+            # a crash mid-add can't leave a citation pointing at an unwritten chunk.
+            # The lock also protects the stores' shared autocommit toggle.
+            self.profiles.autocommit = self.chunks.autocommit = False
+            try:
+                self.profiles.ensure(slug, name=name, entity_type=entity_type)
+                src = self.profiles.add_source(
+                    slug, source_ref, source_kind=(meta or {}).get("kind", "note"),
+                    event_date=event_date, summary=text[:2000],
+                )
+                source_added = bool(src.get("added"))
+                self.chunks.add_chunk(slug, source_ref, text, event_date=event_date)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+            finally:
+                self.profiles.autocommit = self.chunks.autocommit = True
 
-        # add_source already set dirty=1 IFF the source was new; a no-op add does
-        # NOT re-dirty (keeps the "idle nights ~ 0 tokens" guarantee honest).
-        dirty = source_added
-        if self.auto_synth and source_added:
-            self.synthesize(entity=slug)
-            dirty = False
-        return AddResult(slug=slug, dirty=dirty, source_added=source_added)
+            # add_source already set dirty=1 IFF the source was new; a no-op add does
+            # NOT re-dirty (keeps the "idle nights ~ 0 tokens" guarantee honest).
+            dirty = source_added
+            if self.auto_synth and source_added:
+                self.synthesize(entity=slug)   # RLock is reentrant
+                dirty = False
+            return AddResult(slug=slug, dirty=dirty, source_added=source_added)
 
     def ingest(self, path: str, *, entity: str | None = None,
                max_bytes: int = 2_000_000) -> dict:
@@ -158,35 +163,53 @@ class Memory:
 
     # ── synthesis (the dreamer) ───────────────────────────────────────────────
     def synthesize(self, *, entity: str | None = None, all_dirty: bool = False) -> list[str]:
-        if all_dirty:
-            slugs = [p["slug"] for p in self.profiles.list(dirty_only=True)["profiles"]]
-        elif entity:
-            slug = self._resolve_slug(entity)
-            if not self.profiles.exists(slug):
-                # Don't fabricate a phantom profile from a typo'd name.
-                raise KeyError(f"no such entity: {entity!r} — add a source for it first")
-            slugs = [slug]
-        else:
-            raise ValueError("pass entity=... or all_dirty=True")
+        from .synthesis import parse_front_matter
+        with self._lock:
+            if all_dirty:
+                slugs = [p["slug"] for p in self.profiles.list(dirty_only=True)["profiles"]]
+            elif entity:
+                slug = self._resolve_slug(entity)
+                if not self.profiles.exists(slug):
+                    # Don't fabricate a phantom profile from a typo'd name.
+                    raise KeyError(f"no such entity: {entity!r} — add a source for it first")
+                slugs = [slug]
+            else:
+                raise ValueError("pass entity=... or all_dirty=True")
 
-        done: list[str] = []
-        for slug in slugs:
-            got = self.profiles.get(slug)
-            p = got.get("profile") or {}
-            existing_md = p.get("content_md", "") or ""
-            name = self.profiles.name_for(slug) or slug
-            etype = p.get("entity_type", "prospect")
-            sources_text = self.chunks.sources_text(slug) or \
-                "(no new source text; refine the existing profile only)"
-            md = self.synth.run(name, etype, existing_md, sources_text)
-            if not md:
-                continue
-            from .synthesis import parse_front_matter
-            fields = parse_front_matter(md)
-            fields.setdefault("entity_type", etype)
-            self.profiles.set_content(slug, md, fields, clear_dirty=True)
-            done.append(slug)
-        return done
+            done: list[str] = []
+            for slug in slugs:
+                got = self.profiles.get(slug)
+                p = got.get("profile") or {}
+                existing_md = p.get("content_md", "") or ""
+                name = self.profiles.name_for(slug) or slug
+                etype = p.get("entity_type", "prospect")
+                sources_text = self.chunks.sources_text(slug) or \
+                    "(no new source text; refine the existing profile only)"
+                md = self.synth.run(name, etype, existing_md, sources_text)
+                if not md:
+                    continue
+                fields = parse_front_matter(md)
+                fields.setdefault("entity_type", etype)
+                self.profiles.set_content(slug, md, fields, clear_dirty=True)
+                done.append(slug)
+            return done
+
+    def graph(self, name_or_slug: str, *, depth: int = 2) -> dict:
+        """Traverse the [[wikilink]] graph between profiles, from one entity."""
+        rows = [
+            (r["slug"], r["name"] or r["slug"], r["content_md"])
+            for r in self.conn.execute("SELECT slug, name, content_md FROM profiles").fetchall()
+        ]
+        g = build_graph(rows)
+        slug = self._resolve_slug(name_or_slug)
+        if slug not in g.nodes:
+            return {"error": f"no such entity: {name_or_slug!r}", "stats": g.stats()}
+        return {
+            "start": slug, "depth": depth,
+            "neighbors": sorted(g.neighbors(slug)),
+            "layers": g.traverse(slug, depth=depth),
+            "stats": g.stats(),
+        }
 
     # ── introspection ─────────────────────────────────────────────────────────
     def doctor(self) -> dict:

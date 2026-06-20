@@ -56,6 +56,33 @@ mem = Memory.open("brain.db", synth="auto")   # uses your Anthropic key if prese
 
 Plus `entities()`, `ingest(path)`, `doctor()`, and the `mem` CLI (1:1 with the API).
 
+## Plug it into Claude / agents (MCP)
+
+`distillory` speaks [MCP](https://modelcontextprotocol.io), so Claude Code, Claude
+Desktop, or any MCP client gets persistent, *synthesizing* memory in one line:
+
+```bash
+pip install "distillory[mcp]"
+```
+
+```jsonc
+// ~/.claude.json
+{ "mcpServers": { "memory": {
+    "command": "mem",
+    "args": ["serve", "--mcp", "--db", "~/brain.db"]
+} } }
+```
+
+It exposes `memory_add`, `memory_search`, `memory_profile`, `memory_entities`,
+`memory_synthesize`, and `memory_graph`, plus a `memory://profile/{slug}`
+resource. stdio by default — no network, no port, no key.
+
+Not on Python? A zero-dependency HTTP API mirrors the same verbs:
+
+```bash
+mem serve --http --port 7878    # POST /v1/add · /v1/search · /v1/profile · /v1/synthesize · GET /v1/health
+```
+
 ## The schema is the trick
 
 Every synthesis is graded against a schema — a definition of what a *complete*
@@ -82,12 +109,13 @@ fall through to an always-available floor, so a bare offline machine still works
 
 ## Status
 
-This is **v0.1 (slice 1)**: the keyword core, the schema-graded synthesis loop
-(LLM or extractive), one SQLite file, the `mem` CLI. On the roadmap, in order:
-the structured fact ledger + contradiction grader, dense (fastembed) + RRF hybrid
-retrieval, the nightly "dreaming" gap pass, and an **MCP server** so any Claude /
-agent gets persistent memory. Comparison benchmarks (LongMemEval / LOCOMO) ship
-with the hybrid retriever — we don't pitch numbers we haven't run.
+This is **v0.1**: the keyword core, the schema-graded synthesis loop (LLM or
+extractive), one SQLite file, the `mem` CLI, and an **MCP + HTTP server** so any
+Claude / agent gets persistent memory today. On the roadmap, in order: the
+structured fact ledger + contradiction grader (makes contradiction-resolution a
+*mechanism*, not a claim), dense (fastembed) + RRF hybrid retrieval, the nightly
+"dreaming" gap pass, and LongMemEval / LOCOMO benchmarks. We don't pitch
+"hybrid" or numbers we haven't run yet.
 
 Heir to [mbrain](https://github.com/everyai-com/mbrain) (keyword-only); the
 synthesis engine is extracted from a production desktop app.

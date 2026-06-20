@@ -76,6 +76,13 @@ def main(argv=None) -> int:
     p.add_argument("path")
     p.add_argument("--entity", "-e", default=None)
 
+    sp = sub.add_parser("serve", help="run as an MCP server (--mcp) or HTTP JSON API (--http)")
+    sp.add_argument("--mcp", action="store_true", help="MCP server for Claude / agents (stdio)")
+    sp.add_argument("--http", action="store_true", help="HTTP JSON API (or MCP-over-http with --mcp)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=7878)
+    sp.add_argument("--token", default=None, help="bearer token for the HTTP API")
+
     args = ap.parse_args(argv)
     try:
         mem = _open(args)
@@ -119,6 +126,16 @@ def main(argv=None) -> int:
             print(json.dumps(mem.ingest(args.path, entity=args.entity)))
         elif args.cmd == "doctor":
             print(json.dumps(mem.doctor(), indent=2))
+        elif args.cmd == "serve":
+            if args.mcp:
+                from .adapters.mcp_server import serve as serve_mcp
+                serve_mcp(mem, http=args.http, host=args.host, port=args.port)
+            elif args.http:
+                from .adapters.http_server import serve_http
+                serve_http(mem, host=args.host, port=args.port, token=args.token)
+            else:
+                print("mem serve: pass --mcp (for Claude/agents) or --http", file=sys.stderr)
+                return 2
         else:
             ap.print_help()
             return 2
