@@ -7,7 +7,6 @@ All notable changes to distillory are documented here. Format follows
 ## [Unreleased]
 
 ### Planned (sliced, highest-leverage first)
-- **Slice 4** — dense retrieval (fastembed bge-small ONNX) + RRF hybrid fusion.
 - **Slice 7** — nightly "dreaming": dirty-only re-synthesis, decay, gap-hunting.
 - **Slice 10** — LongMemEval / LOCOMO benchmark harness.
 
@@ -30,8 +29,13 @@ First public cut. One embeddable SQLite file; numpy is the only base dependency.
 - **Probe-and-degrade providers** — `synth="auto"` and the embedder ladder fall
   through to an always-available floor; works fully offline (`synth="none"`,
   `embed="hash"`).
-- **Keyword retrieval** — FTS5 BM25 over chunks + a unicode-aware profile ranker,
-  returning cited hits (profile first, then raw chunks).
+- **Hybrid retrieval** — FTS5 BM25 keyword + dense cosine, fused with Reciprocal
+  Rank Fusion (outer-join). Dense is brute-force numpy over BLOB vectors (no
+  sqlite extension needed), backed by a resident matrix with a generation counter
+  so a just-added chunk is searchable immediately. Embedders: bge-small ONNX
+  (`fastembed`) / potion (`model2vec`) / an always-available hash floor, with a
+  fall-through ladder. `doctor()` reports vector count + resident MB. Profiles
+  rank first (the already-reasoned answer), then fused chunks, cited.
 - **MCP server** (`mem serve --mcp`) — `memory_add/search/profile/entities/`
   `synthesize/graph` + a `memory://profile/{slug}` resource, for Claude / agents.
 - **HTTP server** (`mem serve --http`) — zero-dependency JSON API (`/v1/*`).

@@ -133,5 +133,21 @@ class ChunkStore:
             total += len(block)
         return "\n\n".join(blocks)
 
+    def by_uids(self, uids: list[str]) -> dict[str, ChunkHit]:
+        """Fetch chunks by uid in one query (for assembling RRF-fused results)."""
+        uids = list(uids)
+        if not uids:
+            return {}
+        qmarks = ",".join("?" * len(uids))
+        rows = self.conn.execute(
+            f"SELECT chunk_uid, slug, source_ref, text FROM chunks WHERE chunk_uid IN ({qmarks})",
+            uids,
+        ).fetchall()
+        return {
+            r["chunk_uid"]: ChunkHit(chunk_uid=r["chunk_uid"], slug=r["slug"],
+                                     source_ref=r["source_ref"], text=r["text"], score=0.0)
+            for r in rows
+        }
+
     def count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]

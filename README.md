@@ -38,7 +38,7 @@ pip install "distillory @ git+https://github.com/everyai-com/distillory"
 # with the MCP server (for Claude / agents)
 pip install "distillory[mcp] @ git+https://github.com/everyai-com/distillory"
 
-# with real embeddings (bge-small ONNX) + Anthropic synthesis  [hybrid retrieval: slice 4]
+# with real semantic embeddings (bge-small ONNX) + Anthropic synthesis
 pip install "distillory[embed-fastembed,llm-anthropic] @ git+https://github.com/everyai-com/distillory"
 ```
 
@@ -85,7 +85,7 @@ More in [`examples/`](examples/).
 | Verb | What it does |
 |---|---|
 | `add(text, entity=...)` | Append an **immutable** source, chunk + embed + index, mark dirty. Deterministic, no LLM. |
-| `search(query, k=8)` | Cited recall — synthesized profiles first, then raw chunks. (Dense + RRF hybrid: slice 4.) |
+| `search(query, k=8)` | Hybrid recall — FTS5 keyword + dense cosine fused with RRF; synthesized profiles first, then raw chunks, cited. |
 | `profile(name_or_slug)` | Read **one** entity's full living profile — the cheap, already-reasoned answer. |
 | `synthesize(entity=...)` | The dreamer: (re)synthesize a profile against the schema. The one expensive verb. |
 
@@ -152,12 +152,14 @@ caveats doc; we keep it fair and up to date.
 
 ## Status
 
-**v0.1**: the keyword core, **schema-graded synthesis with a fact-ledger grader**
+**v0.1**: **schema-graded synthesis with a fact-ledger grader**
 (validate→repair→retry, then contradiction resolution persisted as structured,
-edge-typed rows — `mem ledger`), one SQLite file, the `mem` CLI, and an **MCP +
-HTTP server** so any Claude / agent gets persistent memory today. Roadmap, in
-order: dense (fastembed) + RRF hybrid retrieval, the nightly "dreaming" gap pass,
-and LongMemEval / LOCOMO benchmarks. We don't pitch "hybrid" or numbers we haven't run.
+edge-typed rows — `mem ledger`), **hybrid retrieval** (FTS5 keyword + dense cosine
+fused with RRF; optional bge-small ONNX embeddings, offline hash floor), one
+SQLite file, the `mem` CLI, and an **MCP + HTTP server** so any Claude / agent
+gets persistent memory today. Roadmap, in order: the nightly "dreaming" gap pass
+(decay + gap-hunting) and a LongMemEval / LOCOMO number. We don't claim a recall
+number until we've run one.
 
 Heir to [mbrain](https://github.com/everyai-com/mbrain) (keyword-only); the
 synthesis engine is extracted from a production desktop app.

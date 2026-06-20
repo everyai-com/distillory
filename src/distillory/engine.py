@@ -17,7 +17,7 @@ from .models import AddResult, Hit, Scope
 from .providers import resolve_embedder, resolve_llm
 from .render.graph import build_graph
 from .render.markdown import preview, slugify
-from .retrieval.keyword import retrieve
+from .retrieval import NumpyBruteForce, hybrid_retrieve
 from .store import ChunkStore, LedgerStore, ProfileStore, connect, get_meta, init_db, set_meta
 from .synthesis import ProfileSynthesizer
 
@@ -36,6 +36,7 @@ class Memory:
         self.profiles = ProfileStore(self.conn)
         self.chunks = ChunkStore(self.conn, self.embedder)
         self.ledger_store = LedgerStore(self.conn)
+        self.dense = NumpyBruteForce(self.conn, self.embedder)
         self.synth = ProfileSynthesizer(self.llm, schema=self.schema)
         self.auto_synth = bool(cfg.auto_synth)
         self._lock = threading.RLock()   # serialize writes (server shares one conn across threads)
@@ -129,8 +130,8 @@ class Memory:
     # ── read path ───────────────────────────────────────────────────────────
     def search(self, query: str, *, k: int = 8, scope: Scope = "personal",
                kind: str | None = None, body: bool = False) -> list[Hit]:
-        return retrieve(self.conn, self.chunks, self.profiles, query,
-                        k=max(1, int(k)), kind=kind, body=body)
+        return hybrid_retrieve(self.conn, self.chunks, self.profiles, self.dense, query,
+                               k=max(1, int(k)), kind=kind, body=body)
 
     def profile(self, name_or_slug: str) -> Hit | None:
         """Read ONE entity's full living profile, by human name or slug."""
@@ -232,11 +233,15 @@ class Memory:
     # ── introspection ─────────────────────────────────────────────────────────
     def doctor(self) -> dict:
         info = getattr(self.embedder, "info", None)
+        uids, _mat, _ = self.dense.cache.get()
         return {
             "db_path": str(self.config.db_path),
             "profiles": len(self.profiles.list()["profiles"]),
             "chunks": self.chunks.count(),
             "ledger": self.ledger_store.count(),
+            "vectors": len(uids),
+            "dense_backend": "numpy-bruteforce",
+            "resident_mb": self.dense.cache.resident_mb(),
             "synth": getattr(self.llm, "name", "none"),
             "embed_model": getattr(info, "model_id", "none") if info else "none",
             "embed_dim": getattr(info, "dim", 0) if info else 0,
