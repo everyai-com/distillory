@@ -16,6 +16,7 @@ import re
 import sqlite3
 
 from ..models import Hit
+from ..render.markdown import preview
 
 
 def retrieve_profiles(conn: sqlite3.Connection, query: str, limit: int = 3,
@@ -68,7 +69,7 @@ def retrieve(conn, chunk_store, profile_store, query: str, *, k: int = 8,
                 slug=slug,
                 title=r.get("name") or slug,
                 score=float(r.get("score", 0)),
-                snippet=md[:200],
+                snippet=preview(md),
                 body=md if body else "",
                 kind="profile",
                 citations=[s["source_ref"] for s in sources],

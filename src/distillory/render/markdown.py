@@ -56,6 +56,17 @@ def yaml_frontmatter(d: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def preview(md: str, n: int = 200) -> str:
+    """A clean one-line preview of a profile: drop YAML front matter and collapse
+    whitespace, so search snippets show real content, not `---\\nentity_type...`."""
+    t = (md or "").lstrip()
+    if t.startswith("---"):
+        end = t.find("\n---", 3)
+        if end != -1:
+            t = t[end + 4:]
+    return " ".join(t.split())[:n]
+
+
 def wikilink(slug_or_text: str) -> str:
     """'Acme AI' -> '[[acme-ai]]'.  Already-slug input passes through."""
     return f"[[{slugify(slug_or_text)}]]"

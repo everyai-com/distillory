@@ -16,7 +16,7 @@ from .config import MemoryConfig, load_schema
 from .models import AddResult, Hit, Scope
 from .providers import resolve_embedder, resolve_llm
 from .render.graph import build_graph
-from .render.markdown import slugify
+from .render.markdown import preview, slugify
 from .retrieval.keyword import retrieve
 from .store import ChunkStore, ProfileStore, connect, get_meta, init_db, set_meta
 from .synthesis import ProfileSynthesizer
@@ -141,7 +141,7 @@ class Memory:
         name = self.profiles.name_for(slug) or slug
         body = p.get("content_md", "") or ""
         return Hit(
-            slug=slug, title=name, score=1.0, snippet=body[:200], body=body,
+            slug=slug, title=name, score=1.0, snippet=preview(body), body=body,
             kind="profile", citations=[s["source_ref"] for s in got.get("sources", [])],
             meta={"entity_type": p.get("entity_type"), "stage": p.get("stage"),
                   "dirty": p.get("dirty")},
