@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# distillory databases (never commit a brain)
+*.db
+*.db-wal
+*.db-shm
+brain.db*
+distillory.db*
+
+# OS
+.DS_Store

@@ -1,0 +1,52 @@
+[project]
+name = "distillory"
+version = "0.1.0"
+description = "Local-first memory engine that synthesizes at ingestion — one schema-graded profile per entity, one SQLite file."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Phanindra Reddy", email = "satya@magicteams.ai" }]
+keywords = ["memory", "agents", "llm", "rag", "sqlite", "local-first", "claude", "mcp", "synthesis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.24"]   # numpy is the ONLY base dep (brute-force cosine). Everything else is an extra.
+
+[project.optional-dependencies]
+vec             = ["sqlite-vec"]
+embed-fastembed = ["fastembed"]
+embed-potion    = ["model2vec"]
+llm-anthropic   = ["anthropic"]
+llm-openai      = ["openai"]
+llm-ollama      = ["ollama"]
+langchain       = ["langchain-core"]
+llamaindex      = ["llama-index-core"]
+dev             = ["pytest>=7", "ruff>=0.5"]
+all             = ["distillory[vec,embed-fastembed,llm-anthropic]"]
+
+[project.scripts]
+mem = "distillory.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/everyai-com/distillory"
+Issues   = "https://github.com/everyai-com/distillory/issues"
+Source   = "https://github.com/everyai-com/distillory"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/distillory"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
