@@ -191,9 +191,18 @@ class Memory:
                     continue
                 fields = parse_front_matter(md)
                 fields.setdefault("entity_type", etype)
-                self.profiles.set_content(slug, md, fields, clear_dirty=True)
-                # Mirror the synthesized ## Ledger into structured, queryable rows.
-                self.ledger_store.set_for_slug(slug, parse_ledger(md))
+                # Persist the profile markdown and its structured ## Ledger mirror
+                # in ONE transaction, so the prose and the queryable rows can't diverge.
+                self.profiles.autocommit = self.ledger_store.autocommit = False
+                try:
+                    self.profiles.set_content(slug, md, fields, clear_dirty=True)
+                    self.ledger_store.set_for_slug(slug, parse_ledger(md))
+                    self.conn.commit()
+                except Exception:
+                    self.conn.rollback()
+                    raise
+                finally:
+                    self.profiles.autocommit = self.ledger_store.autocommit = True
                 done.append(slug)
             return done
 

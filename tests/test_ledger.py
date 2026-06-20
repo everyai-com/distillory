@@ -107,3 +107,42 @@ def test_doctor_reports_ledger_count(tmp_path):
     mem.add("x", entity="David Chen", source_ref="m1")
     assert mem.doctor()["ledger"] >= 2
     mem.close()
+
+
+# ── regressions from the slice-2 adversarial review ──────────────────────────
+
+def test_extractive_floor_valid_with_brackety_source_ref(tmp_path):
+    """A source_ref with brackets (normal file paths) must not make the engine's
+    OWN fallback fail its OWN validator — the slice's core invariant."""
+    mem = Memory.open(tmp_path / "b.db", synth="none", embed="hash")
+    mem.add("David wants the GTSI build", entity="David Chen",
+            source_ref="file:/x/notes[draft].md")
+    body = mem.profile("David Chen").body
+    assert validate(body) == []                  # floor passes its own validator
+    assert mem.ledger("David Chen")              # and a ledger row was mirrored
+    mem.close()
+
+
+def test_parser_accepts_uppercase_edge_status_and_star_bullets():
+    md = ("---\nx: 1\n---\n# T\n## Ledger\n"
+          "* [2026-06-01 · m1] (Update) Moved to London [Superseded]\n")
+    rows = parse_ledger(md)
+    assert len(rows) == 1
+    assert rows[0]["edge"] == "update" and rows[0]["status"] == "superseded"
+
+
+def test_single_terminating_period_stripped_but_ellipsis_kept():
+    base = "---\nx: 1\n---\n# T\n## Ledger\n"
+    assert parse_ledger(base + "- [2026-06-01 · m1] (assert) Ships in v1.2.\n"
+                        )[0]["statement"] == "Ships in v1.2"
+    assert parse_ledger(base + "- [2026-06-01 · m1] (assert) Still deciding...\n"
+                        )[0]["statement"] == "Still deciding..."
+
+
+def test_section_match_is_exact_not_prefix():
+    md = ("---\nx: 1\n---\n# T\n"
+          "## Ledger notes\n- a plain prose bullet, not a ledger line\n"
+          "## Ledger\n- [2026-06-01 · m1] (assert) the real one\n")
+    assert validate(md) == []                    # 'Ledger notes' bullets not flagged
+    rows = parse_ledger(md)
+    assert len(rows) == 1 and rows[0]["statement"] == "the real one"

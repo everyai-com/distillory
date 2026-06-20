@@ -25,18 +25,33 @@ class LedgerStore:
             self.conn.commit()
 
     def set_for_slug(self, slug: str, entries: list[dict]) -> None:
-        """Replace the structured ledger for a slug with the parsed entries."""
-        self.conn.execute("DELETE FROM ledger WHERE slug = ?", (slug,))
-        now = utc_now()
-        for e in entries:
-            self.conn.execute(
-                "INSERT INTO ledger (slug, edge, statement, source_ref, doc_date, "
-                "event_date, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (slug, e["edge"], e["statement"], e.get("source_ref", ""),
-                 e.get("doc_date") or "", e.get("event_date"),
-                 e.get("status", "active"), now),
-            )
-        self._commit()
+        """Replace the structured ledger for a slug with the parsed entries.
+
+        Atomic: the DELETE and the INSERTs commit together (or roll back together),
+        so a bad entry can never wipe the ledger without replacing it. When the
+        caller owns the transaction (autocommit=False), it manages commit/rollback.
+        """
+        owns = self.autocommit
+        try:
+            self.conn.execute("DELETE FROM ledger WHERE slug = ?", (slug,))
+            now = utc_now()
+            for e in entries:
+                edge, statement = e.get("edge"), e.get("statement")
+                if not edge or not statement:
+                    continue  # skip malformed rather than crash the whole replace
+                self.conn.execute(
+                    "INSERT INTO ledger (slug, edge, statement, source_ref, doc_date, "
+                    "event_date, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (slug, edge, statement, e.get("source_ref", ""),
+                     e.get("doc_date") or "", e.get("event_date"),
+                     e.get("status", "active"), now),
+                )
+            if owns:
+                self.conn.commit()
+        except Exception:
+            if owns:
+                self.conn.rollback()
+            raise
 
     def for_slug(self, slug: str) -> list[dict]:
         rows = self.conn.execute(

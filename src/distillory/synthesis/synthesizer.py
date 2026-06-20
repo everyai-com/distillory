@@ -27,6 +27,16 @@ def _clean(md: str | None) -> str | None:
     return md or None
 
 
+# Characters that carry meaning in the ledger-line grammar; neutralized before a
+# source_ref or extractive statement is interpolated, so the floor can never emit
+# a line its own validator rejects.
+_LEDGER_UNSAFE = str.maketrans({"[": "(", "]": ")", "{": "(", "}": ")", "·": "-"})
+
+
+def _safe_ledger(s: str) -> str:
+    return (s or "").translate(_LEDGER_UNSAFE)
+
+
 class ProfileSynthesizer:
     def __init__(self, llm, schema: str | None = None):
         self.llm = llm
@@ -39,7 +49,7 @@ class ProfileSynthesizer:
     def run(self, entity_name: str, entity_type: str, existing_md: str, sources_text: str) -> str:
         md = self._synthesize(entity_name, entity_type, existing_md, sources_text)
         if md is None:                                # no LLM, or the call failed
-            return self._extractive(entity_name, entity_type, sources_text)
+            return self._floor(entity_name, entity_type, sources_text)
         if not validate(md):
             return md
         # Schema violation -> exactly one repair-retry, then fall back rather than
@@ -47,7 +57,7 @@ class ProfileSynthesizer:
         fixed = self._repair(entity_name, entity_type, existing_md, sources_text, validate(md))
         if fixed is not None and not validate(fixed):
             return fixed
-        return self._extractive(entity_name, entity_type, sources_text)
+        return self._floor(entity_name, entity_type, sources_text)
 
     def _synthesize(self, name: str, etype: str, existing: str, sources: str) -> str | None:
         if self._is_null:
@@ -77,6 +87,18 @@ class ProfileSynthesizer:
         except Exception:
             return None
 
+    def _floor(self, name: str, etype: str, sources: str) -> str:
+        """The no-LLM floor — guaranteed to pass validate(), so we never store a
+        profile our own grader would reject (the slice's core invariant)."""
+        ext = self._extractive(name, etype, sources)
+        return ext if not validate(ext) else self._minimal(name, etype)
+
+    def _minimal(self, name: str, etype: str) -> str:
+        return (f"---\nentity_type: {etype}\nstatus: active\nstage: new\n"
+                f"last_synthesized: {today()}\ndirty: false\n---\n# {name or 'Unknown'}\n\n"
+                f"## Where we are\n(insufficient parseable content)\n\n"
+                f"## Ledger\n- (none)\n")
+
     def _extractive(self, entity_name: str, entity_type: str, sources_text: str) -> str:
         """No-LLM floor: a schema-shaped profile assembled from the raw sources.
         Honest about being extractive; still useful and still searchable."""
@@ -90,7 +112,8 @@ class ProfileSynthesizer:
             if ref:
                 source_lines.append(f"- {ref}")
                 if first:
-                    ledger_lines.append(f"- [{today()} · {ref}] (assert) {first[:200]}")
+                    ledger_lines.append(
+                        f"- [{today()} · {_safe_ledger(ref)}] (assert) {_safe_ledger(first)[:200]}")
             if content:
                 body_excerpts.append(content[:600])
         body = "\n\n".join(body_excerpts) or "(no source text)"
